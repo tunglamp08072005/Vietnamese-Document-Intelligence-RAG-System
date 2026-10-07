@@ -13,6 +13,7 @@ from docx.oxml.table import CT_Tbl
 from docx.table import Table
 from docx.text.paragraph import Paragraph
 
+from app.services.citations import clean_pdf_page_text
 from app.services.operations import raise_if_cancelled
 
 
@@ -36,15 +37,6 @@ def clean_text(value: str) -> str:
     value = re.sub(r" *\n *", "\n", value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     return value.strip()
-
-
-def _strip_page_number_artifacts(value: str) -> str:
-    lines = value.splitlines()
-    while lines and re.fullmatch(r"\s*\d+\s*", lines[0]):
-        lines.pop(0)
-    while lines and re.fullmatch(r"\s*\d+\s*", lines[-1]):
-        lines.pop()
-    return clean_text("\n".join(lines))
 
 
 def _docx_blocks(document: DocumentType):
@@ -120,15 +112,15 @@ def extract_pdf(
     with pymupdf.open(stream=data, filetype="pdf") as pdf:
         for index, page in enumerate(pdf, start=1):
             raise_if_cancelled(cancel_event)
-            text = _strip_page_number_artifacts(page.get_text("text"))
+            text = clean_pdf_page_text(page.get_text("text"))
             if _page_needs_ocr(page, text):
                 try:
                     textpage = page.get_textpage_ocr(language=ocr_language, dpi=ocr_dpi, full=True)
-                    ocr_text = _strip_page_number_artifacts(page.get_text("text", textpage=textpage))
+                    ocr_text = clean_pdf_page_text(page.get_text("text", textpage=textpage))
                 except Exception as tesseract_error:
                     raise_if_cancelled(cancel_event)
                     try:
-                        ocr_text = clean_text(_extract_page_text_with_rapid_ocr(page, ocr_dpi))
+                        ocr_text = clean_pdf_page_text(_extract_page_text_with_rapid_ocr(page, ocr_dpi))
                     except Exception as rapid_ocr_error:
                         raise_if_cancelled(cancel_event)
                         raise ValueError(
@@ -208,10 +200,7 @@ def _split_oversized(text: str, max_chars: int) -> list[str]:
 def chunk_pages(pages: list[TextPage], max_chars: int, overlap_chars: int) -> list[TextChunk]:
     units: list[tuple[str, int | None]] = []
     for page in pages:
-        # PDF extraction inserts single newlines at visual line wraps. Join those
-        # lines before chunking so a sentence is not exposed as a fragment.
-        page_text = re.sub(r"(?<!\n)\n(?!\n)", " ", page.text)
-        for paragraph in re.split(r"\n{2,}", page_text):
+        for paragraph in re.split(r"\n{2,}", page.text):
             paragraph = clean_text(paragraph)
             if paragraph:
                 units.extend((part, page.number) for part in _split_oversized(paragraph, max_chars))
@@ -221,7 +210,8 @@ def chunk_pages(pages: list[TextPage], max_chars: int, overlap_chars: int) -> li
     current_pages: list[int] = []
     for text, page_number in units:
         candidate = f"{current}\n\n{text}".strip()
-        if current and len(candidate) > max_chars:
+        page_changed = bool(current_pages and page_number is not None and current_pages[-1] != page_number)
+        if current and (len(candidate) > max_chars or page_changed):
             chunks.append(
                 TextChunk(
                     content=current,
@@ -229,7 +219,7 @@ def chunk_pages(pages: list[TextPage], max_chars: int, overlap_chars: int) -> li
                     page_end=max(current_pages) if current_pages else None,
                 )
             )
-            tail_limit = max(0, min(overlap_chars, max_chars - len(text) - 2))
+            tail_limit = 0 if page_changed else max(0, min(overlap_chars, max_chars - len(text) - 2))
             # Keep overlap only at a complete sentence/list-item boundary.
             tail = ""
             if tail_limit:

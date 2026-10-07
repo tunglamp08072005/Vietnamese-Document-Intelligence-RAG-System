@@ -17,6 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import get_settings
 from app.database import Database
 from app.schemas import DocumentOut, IndexOut, IndexRequest, QueryOut, QueryRequest, SourceOut, UploadOut
+from app.services.citations import citation_excerpt
 from app.services.documents import chunk_pages, extract_docx, extract_pdf
 from app.services.embeddings import EmbeddingService
 from app.services.generation import AnswerService
@@ -402,7 +403,7 @@ async def query_documents(request: QueryRequest, http_request: Request) -> Query
             page_end=result.get("page_end"),
             chunk_id=result["id"],
             score=result["score"],
-            content=result["content"],
+            content=citation_excerpt(result["content"], request.question, answer),
         )
         for index, result in enumerate(retrieved, start=1)
         if index in cited_numbers

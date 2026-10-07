@@ -49,7 +49,7 @@ Mở `http://localhost:8501`; tài liệu API ở `http://127.0.0.1:8000/docs`. 
 
 Giữ tiến trình `run_local.py`, hoặc cả hai terminal API và Streamlit, chạy trong suốt khi sử dụng ứng dụng. Nếu giao diện báo không kết nối được `127.0.0.1:8000`, hãy kiểm tra log API trong terminal.
 
-Khi tải PDF scan, các trang có ảnh chiếm nhiều diện tích và dưới 1.200 ký tự văn bản sẽ được OCR ở 250 DPI. Có thể chỉnh `OCR_LANGUAGE` và `OCR_DPI` trong `.env`. Nếu RapidOCR chưa có model trong cache, lần đầu xử lý cần kết nối Internet. Tài liệu đã lập chỉ mục trước khi bật OCR cần xóa khỏi giao diện rồi tải lên lại.
+Khi tải PDF scan, các trang có ảnh chiếm nhiều diện tích và dưới 1.200 ký tự văn bản sẽ được OCR ở 250 DPI. Có thể chỉnh `OCR_LANGUAGE` và `OCR_DPI` trong `.env`. Nếu RapidOCR chưa có model trong cache, lần đầu xử lý cần kết nối Internet. Tài liệu PDF đã lập chỉ mục theo cách cũ vẫn được làm sạch đoạn trích khi hỏi đáp; để áp dụng cách chia đoạn theo từng trang và có số trang citation chính xác hơn, hãy xóa tài liệu khỏi giao diện rồi tải lên lại.
 
 Trong khi lập chỉ mục hoặc hỏi đáp, nút `Dừng tải lên` / `Dừng tìm kiếm` hủy yêu cầu đang chạy. API dừng ở điểm xử lý an toàn tiếp theo; nếu đang lập chỉ mục dở, hệ thống xóa dữ liệu trung gian trước khi trả kết quả.
 

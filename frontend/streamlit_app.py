@@ -256,7 +256,7 @@ def render_query_result(result: dict) -> None:
                 if source["page_end"] != source["page_start"]:
                     page += f"–{source['page_end']}"
             with st.expander(f"[{source['citation']}] {source['filename']}{page}"):
-                st.write(source["content"])
+                st.markdown(source["content"])
 
 
 with st.sidebar:

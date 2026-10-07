@@ -2,6 +2,8 @@ import re
 
 import httpx
 
+from app.services.citations import clean_source_text
+
 
 SYSTEM_PROMPT = """Bạn là trợ lý nghiên cứu, trả lời câu hỏi dựa trên tài liệu được cung cấp.
 Luôn trả lời bằng tiếng Việt, kể cả khi tài liệu nguồn viết bằng ngôn ngữ khác, trừ khi người dùng yêu cầu ngôn ngữ khác.
@@ -56,7 +58,8 @@ class AnswerService:
             return "Tôi không tìm thấy thông tin liên quan trong các tài liệu đã lập chỉ mục.", "grounded"
 
         context = "\n\n".join(
-            f"[{index}] {source['filename']}{self._page_label(source)}\n{source['content']}"
+            f"[{index}] {source['filename']}{self._page_label(source)}\n"
+            f"{clean_source_text(source['content'])}"
             for index, source in enumerate(sources, start=1)
         )
         try:
