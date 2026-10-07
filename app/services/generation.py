@@ -29,10 +29,17 @@ SETUP_MESSAGE = (
 
 
 class AnswerService:
-    def __init__(self, base_url: str, model: str, timeout_seconds: float = 120) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout_seconds: float = 600,
+        keep_alive: str = "10m",
+    ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model.strip()
         self.timeout_seconds = timeout_seconds
+        self.keep_alive = keep_alive
         self._detected_model: str | None = None
 
     async def answer(self, question: str, sources: list[dict]) -> tuple[str, str]:
@@ -44,7 +51,11 @@ class AnswerService:
             for index, source in enumerate(sources, start=1)
         )
         try:
-            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+            timeout = httpx.Timeout(
+                self.timeout_seconds,
+                connect=min(10.0, self.timeout_seconds),
+            )
+            async with httpx.AsyncClient(timeout=timeout) as client:
                 model = self.model or self._detected_model
                 if not model:
                     model = await self._find_local_chat_model(client)
@@ -57,6 +68,7 @@ class AnswerService:
                     json={
                         "model": model,
                         "stream": False,
+                        "keep_alive": self.keep_alive,
                         "messages": [
                             {"role": "system", "content": SYSTEM_PROMPT},
                             {"role": "user", "content": f"CONTEXT:\n{context}\n\nCÂU HỎI:\n{question}"},
@@ -69,7 +81,12 @@ class AnswerService:
         except httpx.ConnectError:
             return "Không kết nối được Ollama. Hãy khởi động Ollama rồi thử lại.", "configuration_required"
         except httpx.TimeoutException:
-            return "Ollama chưa phản hồi kịp thời. Model có thể đang khởi động; hãy thử lại sau.", "configuration_required"
+            timeout_label = f"{self.timeout_seconds:g} giây"
+            return (
+                f"Ollama đã quá thời gian chờ {timeout_label}. Model có thể đang nạp hoặc máy xử lý chậm; "
+                "hãy tăng OLLAMA_TIMEOUT_SECONDS hoặc dùng model nhỏ hơn.",
+                "configuration_required",
+            )
         except httpx.HTTPStatusError as error:
             if error.response.status_code == 404:
                 return f"Ollama chưa có model '{model}'. Hãy chạy `ollama pull {model}` rồi thử lại.", "configuration_required"

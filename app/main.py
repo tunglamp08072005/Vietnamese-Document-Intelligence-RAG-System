@@ -56,6 +56,7 @@ async def lifespan(application: FastAPI):
         settings.ollama_base_url,
         settings.ollama_model,
         settings.ollama_timeout_seconds,
+        settings.ollama_keep_alive,
     )
     yield
     vectors.close()

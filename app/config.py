@@ -18,7 +18,8 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = ""
-    ollama_timeout_seconds: float = 120.0
+    ollama_timeout_seconds: float = 600.0
+    ollama_keep_alive: str = "10m"
     max_upload_mb: int = 25
     chunk_size_chars: int = 2000
     chunk_overlap_chars: int = 300

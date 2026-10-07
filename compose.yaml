@@ -23,6 +23,8 @@ services:
       INDEX_BATCH_SIZE: ${INDEX_BATCH_SIZE:-128}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-}
+      OLLAMA_TIMEOUT_SECONDS: ${OLLAMA_TIMEOUT_SECONDS:-600}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-10m}
       RERANKER_ENABLED: ${RERANKER_ENABLED:-false}
     ports:
       - "8000:8000"
@@ -40,6 +42,7 @@ services:
     command: ["streamlit", "run", "frontend/streamlit_app.py", "--server.address=0.0.0.0", "--server.port=8501"]
     environment:
       API_URL: http://api:8000
+      API_QUERY_TIMEOUT_SECONDS: ${API_QUERY_TIMEOUT_SECONDS:-660}
     ports:
       - "8501:8501"
     depends_on:

@@ -5,6 +5,7 @@ import streamlit as st
 
 
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+API_QUERY_TIMEOUT_SECONDS = int(os.getenv("API_QUERY_TIMEOUT_SECONDS", "660"))
 st.set_page_config(page_title="Vietnamese Document Intelligence", page_icon="📚", layout="wide")
 st.title("Vietnamese Document Intelligence")
 st.caption("Tải tài liệu PDF/DOCX lên, sau đó hỏi đáp dựa trên nội dung đã lập chỉ mục.")
@@ -89,7 +90,7 @@ if st.button("Tìm câu trả lời", type="primary", disabled=len(question.stri
             response = requests.post(
                 f"{API_URL}/query",
                 json={"question": question},
-                timeout=300,
+                timeout=(10, API_QUERY_TIMEOUT_SECONDS),
             )
             if not response.ok:
                 st.error(api_error(response))
