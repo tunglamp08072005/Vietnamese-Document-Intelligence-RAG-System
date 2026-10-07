@@ -35,7 +35,9 @@ Khởi động UI trong terminal thứ hai:
 streamlit run frontend/streamlit_app.py
 ```
 
-Mở `http://localhost:8501`; tài liệu API ở `http://localhost:8000/docs`. Lần đầu lập chỉ mục sẽ tải model `BAAI/bge-m3` từ Hugging Face và cần kết nối mạng. Qdrant chạy embedded, lưu dữ liệu tại `./data/qdrant`; chỉ chạy một process API khi dùng chế độ này.
+Mở `http://localhost:8501`; tài liệu API ở `http://localhost:8000/docs`. Lần đầu lập chỉ mục sẽ tải model `BAAI/bge-m3` từ Hugging Face và cần kết nối mạng; những lần sau model đã nằm trong cache. Qdrant chạy embedded, lưu dữ liệu tại `./data/qdrant`; chỉ chạy một process API khi dùng chế độ này.
+
+Quá trình upload ghi thời gian đọc file, trích xuất, chunking, embedding và Qdrant vào terminal API. Mặc định Qdrant ghi theo lô 128 chunks để giảm số lượt ghi; có thể điều chỉnh `INDEX_BATCH_SIZE`. Nếu đủ bộ nhớ, tăng `EMBEDDING_BATCH_SIZE` từ 8 lên 16 hoặc 32 để thử tăng tốc embedding; nếu gặp lỗi thiếu bộ nhớ, giảm về 4 hoặc 8.
 
 ## Bật LLM Ollama
 

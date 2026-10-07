@@ -18,33 +18,50 @@ def api_error(response: requests.Response) -> str:
         return response.text or f"HTTP {response.status_code}"
 
 
+@st.cache_data(ttl=10, max_entries=4, show_spinner=False)
+def load_documents(api_url: str) -> list[dict]:
+    response = requests.get(f"{api_url}/documents", timeout=10)
+    response.raise_for_status()
+    return response.json()
+
+
 with st.sidebar:
     st.header("Tài liệu")
     uploaded = st.file_uploader("Chọn tài liệu PDF hoặc DOCX", type=["pdf", "docx"])
-    if st.button("Tải lên và lập chỉ mục", disabled=uploaded is None, use_container_width=True):
+    if st.button("Tải lên và lập chỉ mục", disabled=uploaded is None, width="stretch"):
+        file_content = uploaded.getvalue()
         try:
-            response = requests.post(
-                f"{API_URL}/documents/upload",
-                files={"file": (uploaded.name, uploaded.getvalue(), uploaded.type)},
-                timeout=300,
-            )
-            if response.ok:
-                payload = response.json()
-                if payload.get("already_indexed"):
-                    st.info(f"{payload['filename']} đã được lập chỉ mục.")
+            with st.status("Đang tải lên và lập chỉ mục...", expanded=True) as upload_status:
+                st.write(f"Tệp: {uploaded.name} ({len(file_content) / 1024 / 1024:.1f} MB)")
+                st.write("PDF đang được trích xuất nội dung và mã hóa bằng BGE-M3.")
+                st.caption("Lần đầu chạy có thể lâu hơn vì cần tải model về máy.")
+                try:
+                    response = requests.post(
+                        f"{API_URL}/documents/upload",
+                        files={"file": (uploaded.name, file_content, uploaded.type)},
+                        timeout=(10, 1800),
+                    )
+                except requests.RequestException:
+                    upload_status.update(label="Không kết nối được API", state="error", expanded=True)
+                    raise
+                if response.ok:
+                    load_documents.clear()
+                    payload = response.json()
+                    if payload.get("already_indexed"):
+                        upload_status.update(label="Tài liệu đã được lập chỉ mục", state="complete", expanded=False)
+                    else:
+                        upload_status.update(label="Đã lập chỉ mục xong", state="complete", expanded=False)
+                    st.success(f"{payload['filename']} · {payload['chunk_count']} đoạn.")
                 else:
-                    st.success(f"Đã lập chỉ mục {payload['filename']} · {payload['chunk_count']} đoạn.")
-            else:
-                st.error(api_error(response))
+                    upload_status.update(label="Lập chỉ mục thất bại", state="error", expanded=True)
+                    st.error(api_error(response))
         except requests.RequestException as error:
             st.error(f"Không kết nối được API: {error}")
 
     st.divider()
     st.subheader("Đã lập chỉ mục")
     try:
-        documents_response = requests.get(f"{API_URL}/documents", timeout=10)
-        documents_response.raise_for_status()
-        documents = documents_response.json()
+        documents = load_documents(API_URL)
         if not documents:
             st.caption("Chưa có tài liệu.")
         for document in documents:
@@ -55,6 +72,7 @@ with st.sidebar:
                     try:
                         deletion = requests.delete(f"{API_URL}/documents/{document['id']}", timeout=20)
                         if deletion.ok:
+                            load_documents.clear()
                             st.rerun()
                         st.error(api_error(deletion))
                     except requests.RequestException as error:

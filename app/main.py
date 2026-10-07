@@ -5,6 +5,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
@@ -35,7 +36,11 @@ async def lifespan(application: FastAPI):
         api_key=settings.qdrant_api_key,
     )
     vectors.ensure_collection()
-    embeddings = EmbeddingService(settings.embedding_model, settings.embedding_device)
+    embeddings = EmbeddingService(
+        settings.embedding_model,
+        settings.embedding_device,
+        batch_size=settings.embedding_batch_size,
+    )
     application.state.database = database
     application.state.vectors = vectors
     application.state.embeddings = embeddings
@@ -60,12 +65,33 @@ async def lifespan(application: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
 
-def _upsert_in_batches(embeddings: EmbeddingService, vectors: VectorStore, chunks: list[dict]) -> None:
-    batch_size = 32
+def _upsert_in_batches(
+    embeddings: EmbeddingService,
+    vectors: VectorStore,
+    chunks: list[dict],
+    batch_size: int,
+) -> None:
+    batch_size = max(1, batch_size)
+    started_at = perf_counter()
+    total_batches = (len(chunks) + batch_size - 1) // batch_size
     for start in range(0, len(chunks), batch_size):
         batch = chunks[start : start + batch_size]
+        embedding_started_at = perf_counter()
         encoded = embeddings.encode([chunk["content"] for chunk in batch])
+        embedding_seconds = perf_counter() - embedding_started_at
+        qdrant_started_at = perf_counter()
         vectors.upsert(batch, encoded)
+        qdrant_seconds = perf_counter() - qdrant_started_at
+        batch_number = start // batch_size + 1
+        logger.info(
+            "Indexed chunk batch %d/%d (%d chunks): embedding %.1fs, Qdrant %.1fs",
+            batch_number,
+            total_batches,
+            len(batch),
+            embedding_seconds,
+            qdrant_seconds,
+        )
+    logger.info("Indexed %d chunks in %.1f seconds", len(chunks), perf_counter() - started_at)
 
 
 def _document_out(row: dict, already_indexed: bool = False) -> UploadOut:
@@ -85,12 +111,15 @@ def health() -> dict[str, str]:
 
 @app.post("/documents/upload", response_model=UploadOut, status_code=201, tags=["documents"])
 async def upload_document(file: UploadFile = File(...)) -> UploadOut:
+    upload_started_at = perf_counter()
     filename = Path(file.filename or "").name
     suffix = Path(filename).suffix.lower()
     if suffix not in {".pdf", ".docx"}:
         raise HTTPException(status_code=415, detail="Chỉ hỗ trợ tài liệu PDF hoặc DOCX.")
 
+    read_started_at = perf_counter()
     content = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
+    read_seconds = perf_counter() - read_started_at
     if len(content) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"Kích thước tối đa là {settings.max_upload_mb} MB.")
     if not content:
@@ -102,8 +131,14 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
         return _document_out(existing, already_indexed=True)
 
     try:
-        pages = extract_pdf(content) if suffix == ".pdf" else extract_docx(content)
-        text_chunks = chunk_pages(pages, settings.chunk_size_chars, settings.chunk_overlap_chars)
+        extraction_started_at = perf_counter()
+        pages = await run_in_threadpool(extract_pdf if suffix == ".pdf" else extract_docx, content)
+        extraction_seconds = perf_counter() - extraction_started_at
+        chunking_started_at = perf_counter()
+        text_chunks = await run_in_threadpool(
+            chunk_pages, pages, settings.chunk_size_chars, settings.chunk_overlap_chars
+        )
+        chunking_seconds = perf_counter() - chunking_started_at
     except Exception as error:
         logger.info("Could not extract %s: %s", filename, error)
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -132,7 +167,13 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
             {"id": document_id, "filename": filename, "sha256": digest, "created_at": now},
             chunks,
         )
-        await run_in_threadpool(_upsert_in_batches, app.state.embeddings, app.state.vectors, chunks)
+        await run_in_threadpool(
+            _upsert_in_batches,
+            app.state.embeddings,
+            app.state.vectors,
+            chunks,
+            settings.index_batch_size,
+        )
     except sqlite3.IntegrityError:
         existing = app.state.database.find_document_by_hash(digest)
         if existing:
@@ -150,6 +191,18 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
         logger.exception("Indexing failed for %s", filename)
         raise HTTPException(status_code=503, detail=f"Không thể lập chỉ mục tài liệu: {error}") from error
 
+    logger.info(
+        "Upload complete: file=%s bytes=%d pages=%d chunks=%d read=%.1fs extract=%.1fs "
+        "chunk=%.1fs total=%.1fs",
+        filename,
+        len(content),
+        len(pages),
+        len(chunks),
+        read_seconds,
+        extraction_seconds,
+        chunking_seconds,
+        perf_counter() - upload_started_at,
+    )
     return UploadOut(
         id=document_id,
         filename=filename,
@@ -169,7 +222,7 @@ def reindex_documents(request: IndexRequest) -> IndexOut:
     if not chunks:
         return IndexOut(indexed_documents=0, indexed_chunks=0)
     try:
-        _upsert_in_batches(app.state.embeddings, app.state.vectors, chunks)
+        _upsert_in_batches(app.state.embeddings, app.state.vectors, chunks, settings.index_batch_size)
     except Exception as error:
         logger.exception("Reindex failed")
         raise HTTPException(status_code=503, detail=f"Không thể lập chỉ mục lại: {error}") from error

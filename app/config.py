@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
     chunk_size_chars: int = 2000
     chunk_overlap_chars: int = 300
+    embedding_batch_size: int = 8
+    index_batch_size: int = 128
     retrieval_candidate_count: int = 40
     retrieval_top_k: int = 5
     rrf_k: int = 60
