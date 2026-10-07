@@ -19,6 +19,18 @@ def api_error(response: requests.Response) -> str:
         return response.text or f"HTTP {response.status_code}"
 
 
+def show_request_error(action: str, error: requests.RequestException) -> None:
+    if isinstance(error, requests.ConnectionError):
+        st.error(f"{action}: Không kết nối được API tại {API_URL}. API có thể chưa chạy.")
+        st.caption("Với chế độ chạy local, mở terminal khác trong thư mục dự án và chạy:")
+        st.code("uvicorn app.main:app --reload", language="powershell")
+        st.caption("Nếu dùng Docker Compose, chạy `docker compose up --build` tại thư mục dự án.")
+    elif isinstance(error, requests.Timeout):
+        st.error(f"{action}: API tại {API_URL} phản hồi quá thời gian chờ. Hãy kiểm tra terminal đang chạy API.")
+    else:
+        st.error(f"{action}: {error}")
+
+
 @st.cache_data(ttl=10, max_entries=4, show_spinner=False)
 def load_documents(api_url: str) -> list[dict]:
     response = requests.get(f"{api_url}/documents", timeout=10)
@@ -57,7 +69,7 @@ with st.sidebar:
                     upload_status.update(label="Lập chỉ mục thất bại", state="error", expanded=True)
                     st.error(api_error(response))
         except requests.RequestException as error:
-            st.error(f"Không kết nối được API: {error}")
+            show_request_error("Không thể tải lên và lập chỉ mục", error)
 
     st.divider()
     st.subheader("Đã lập chỉ mục")
@@ -77,9 +89,9 @@ with st.sidebar:
                             st.rerun()
                         st.error(api_error(deletion))
                     except requests.RequestException as error:
-                        st.error(f"Không xóa được tài liệu: {error}")
+                        show_request_error("Không xóa được tài liệu", error)
     except requests.RequestException as error:
-        st.warning(f"Không tải được danh sách tài liệu: {error}")
+        show_request_error("Không tải được danh sách tài liệu", error)
 
 st.header("Hỏi đáp")
 question = st.text_area("Câu hỏi", placeholder="Ví dụ: Điều kiện để sinh viên được xét tốt nghiệp là gì?")
@@ -112,4 +124,4 @@ if st.button("Tìm câu trả lời", type="primary", disabled=len(question.stri
                         with st.expander(f"[{source['citation']}] {source['filename']}{page}"):
                             st.write(source["content"])
         except requests.RequestException as error:
-            st.error(f"Không kết nối được API: {error}")
+            show_request_error("Không thể tìm câu trả lời", error)
