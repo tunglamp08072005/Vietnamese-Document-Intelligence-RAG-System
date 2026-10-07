@@ -23,6 +23,14 @@ python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
+Để khởi động API và giao diện cùng lúc trong một terminal, chạy:
+
+```powershell
+.\.venv\Scripts\python.exe run_local.py
+```
+
+Lệnh này chờ API sẵn sàng rồi mới mở Streamlit. Nhấn `Ctrl+C` để dừng cả hai. Nếu muốn mở riêng, giữ cả hai terminal dưới đây chạy đồng thời.
+
 Khởi động API trong terminal thứ nhất:
 
 ```powershell
@@ -37,7 +45,7 @@ streamlit run frontend/streamlit_app.py
 
 Mở `http://localhost:8501`; tài liệu API ở `http://127.0.0.1:8000/docs`. Lần đầu lập chỉ mục sẽ tải model `BAAI/bge-m3` từ Hugging Face và cần kết nối mạng; những lần sau model đã nằm trong cache. Qdrant chạy embedded, lưu dữ liệu tại `./data/qdrant`; chỉ chạy một process API khi dùng chế độ này.
 
-Giữ cả hai terminal API và Streamlit đang chạy khi sử dụng ứng dụng. Nếu giao diện báo không kết nối được `127.0.0.1:8000`, hãy kiểm tra terminal API; nếu API chưa chạy, khởi động lại bằng `uvicorn app.main:app --reload`.
+Giữ tiến trình `run_local.py`, hoặc cả hai terminal API và Streamlit, chạy trong suốt khi sử dụng ứng dụng. Nếu giao diện báo không kết nối được `127.0.0.1:8000`, hãy kiểm tra log API trong terminal.
 
 Quá trình upload ghi thời gian đọc file, trích xuất, chunking, embedding và Qdrant vào terminal API. Mặc định Qdrant ghi theo lô 128 chunks để giảm số lượt ghi; có thể điều chỉnh `INDEX_BATCH_SIZE`. Nếu đủ bộ nhớ, tăng `EMBEDDING_BATCH_SIZE` từ 8 lên 16 hoặc 32 để thử tăng tốc embedding; nếu gặp lỗi thiếu bộ nhớ, giảm về 4 hoặc 8.
 
