@@ -4,7 +4,7 @@ import requests
 import streamlit as st
 
 
-API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 API_QUERY_TIMEOUT_SECONDS = int(os.getenv("API_QUERY_TIMEOUT_SECONDS", "660"))
 st.set_page_config(page_title="Vietnamese Document Intelligence", page_icon="📚", layout="wide")
 st.title("Vietnamese Document Intelligence")
