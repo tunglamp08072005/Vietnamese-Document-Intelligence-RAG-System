@@ -19,6 +19,9 @@ st.caption("Tải tài liệu PDF/DOCX lên, sau đó hỏi đáp dựa trên n�
 st.session_state.setdefault("active_operation", None)
 st.session_state.setdefault("operation_feedback", None)
 st.session_state.setdefault("last_query_result", None)
+st.session_state.setdefault("chat_history", [])
+if not st.session_state.chat_history and st.session_state.last_query_result:
+    st.session_state.chat_history.append({"role": "assistant", "result": st.session_state.last_query_result})
 
 
 @st.cache_resource
@@ -74,8 +77,6 @@ def start_operation(kind: str, submit_request, *args) -> None:
         "cancel_requested": False,
     }
     st.session_state.operation_feedback = None
-    if kind == "query":
-        st.session_state.last_query_result = None
 
 
 async def post_with_cancellation(url: str, cancel_event: Event, **kwargs):
@@ -162,6 +163,7 @@ def finish_operation(operation: dict) -> None:
                     load_documents.clear()
                 else:
                     st.session_state.last_query_result = payload
+                    st.session_state.chat_history.append({"role": "assistant", "result": payload})
             else:
                 feedback = {"kind": operation["kind"], "error": api_error(response)}
 
@@ -242,13 +244,12 @@ def render_query_operation() -> None:
 
 
 def render_query_result(result: dict) -> None:
-    st.subheader("Trả lời")
     if result["answer_mode"] == "configuration_required":
         st.warning(result["answer"])
     else:
         st.markdown(result["answer"])
     if result["sources"]:
-        st.subheader("Nguồn")
+        st.caption("Nguồn")
         for source in result["sources"]:
             page = ""
             if source["page_start"] is not None:
@@ -301,17 +302,28 @@ with st.sidebar:
         show_request_error("Không tải được danh sách tài liệu", error)
 
 st.header("Hỏi đáp")
-question = st.text_area("Câu hỏi", placeholder="Ví dụ: Điều kiện để sinh viên được xét tốt nghiệp là gì?")
 st.caption("AI sẽ tự chọn các nguồn phù hợp từ tài liệu đã lập chỉ mục.")
+for message in st.session_state.chat_history:
+    if message["role"] == "user":
+        with st.chat_message("user"):
+            st.markdown(message["content"])
+    else:
+        with st.chat_message("assistant"):
+            render_query_result(message["result"])
+
 active_operation = st.session_state.get("active_operation")
-if st.button(
-    "Tìm câu trả lời",
-    type="primary",
-    disabled=len(question.strip()) < 2 or active_operation is not None,
-):
-    start_operation("query", submit_query, question)
 if (st.session_state.get("active_operation") or {}).get("kind") == "query":
     render_query_operation()
 render_feedback("query")
-if st.session_state.get("last_query_result"):
-    render_query_result(st.session_state.last_query_result)
+question = st.chat_input(
+    "Hỏi tiếp về các tài liệu đã lập chỉ mục…",
+    disabled=active_operation is not None,
+)
+if question:
+    if len(question.strip()) < 2:
+        st.warning("Câu hỏi cần có ít nhất 2 ký tự.")
+    else:
+        start_operation("query", submit_query, question.strip())
+        if st.session_state.active_operation and st.session_state.active_operation["kind"] == "query":
+            st.session_state.chat_history.append({"role": "user", "content": question.strip()})
+            st.rerun()
