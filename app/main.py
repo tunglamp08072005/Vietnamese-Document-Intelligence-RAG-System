@@ -17,7 +17,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import get_settings
 from app.database import Database
 from app.schemas import DocumentOut, IndexOut, IndexRequest, QueryOut, QueryRequest, SourceOut, UploadOut
-from app.services.citations import citation_excerpt
+from app.services.citations import add_qcvn_citations, citation_excerpt
 from app.services.documents import chunk_pages, extract_docx, extract_pdf
 from app.services.embeddings import EmbeddingService
 from app.services.generation import AnswerService
@@ -384,6 +384,9 @@ async def query_documents(request: QueryRequest, http_request: Request) -> Query
         mode = "configuration_required"
 
     cited_numbers = set(app.state.answerer.cited_source_numbers(answer, len(retrieved)))
+    if mode == "ollama":
+        answer, cited_numbers = add_qcvn_citations(answer, retrieved, cited_numbers)
+        cited_numbers.update(app.state.answerer.cited_source_numbers(answer, len(retrieved)))
     if (
         mode == "ollama"
         and retrieved
