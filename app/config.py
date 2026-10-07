@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     embedding_batch_size: int = 8
     index_batch_size: int = 128
     retrieval_candidate_count: int = 40
-    retrieval_top_k: int = 5
+    retrieval_top_k: int = 8
     rrf_k: int = 60
 
 

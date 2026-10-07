@@ -18,7 +18,6 @@ class QueryRequest(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     question: str = Field(min_length=2, max_length=2000)
-    top_k: int = Field(default=5, ge=1, le=20)
     document_ids: list[str] | None = None
 
 

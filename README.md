@@ -65,7 +65,7 @@ UI ở `http://localhost:8501`, API ở `http://localhost:8000/docs`, Qdrant das
 - `POST /documents/index` — lập chỉ mục lại tất cả hoặc `{"document_ids": ["..."]}`.
 - `GET /documents` — danh sách tài liệu.
 - `DELETE /documents/{id}` — xóa metadata, chunks và vector.
-- `POST /query` — `{"question": "...", "top_k": 5, "document_ids": null}`.
+- `POST /query` — `{"question": "...", "document_ids": null}`. Model tự chọn và trích dẫn các nguồn thực sự dùng trong câu trả lời; `RETRIEVAL_TOP_K` chỉ giới hạn số đoạn ứng viên tối đa gửi vào context.
 
 Mỗi nguồn trong câu trả lời có `citation`, `filename`, `page_start`, `page_end`, `chunk_id`, điểm retrieval và nội dung dùng làm ngữ cảnh.
 

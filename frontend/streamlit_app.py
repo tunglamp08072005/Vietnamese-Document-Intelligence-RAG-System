@@ -82,13 +82,13 @@ with st.sidebar:
 
 st.header("Hỏi đáp")
 question = st.text_area("Câu hỏi", placeholder="Ví dụ: Điều kiện để sinh viên được xét tốt nghiệp là gì?")
-top_k = st.slider("Số đoạn nguồn", min_value=1, max_value=10, value=5)
+st.caption("AI sẽ tự chọn các nguồn phù hợp từ tài liệu đã lập chỉ mục.")
 if st.button("Tìm câu trả lời", type="primary", disabled=len(question.strip()) < 2):
     with st.spinner("Đang tìm trong tài liệu..."):
         try:
             response = requests.post(
                 f"{API_URL}/query",
-                json={"question": question, "top_k": top_k},
+                json={"question": question},
                 timeout=300,
             )
             if not response.ok:

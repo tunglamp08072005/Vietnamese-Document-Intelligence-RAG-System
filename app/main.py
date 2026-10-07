@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 
-import httpx
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from starlette.concurrency import run_in_threadpool
 
@@ -257,16 +256,22 @@ async def query_documents(request: QueryRequest) -> QueryOut:
 
     try:
         retrieved = await run_in_threadpool(
-            app.state.retrieval.retrieve, request.question, request.top_k, request.document_ids
+            app.state.retrieval.retrieve, request.question, settings.retrieval_top_k, request.document_ids
         )
-        answer, mode = await app.state.answerer.answer(request.question, retrieved)
-    except (httpx.HTTPError, RuntimeError) as error:
-        logger.exception("Query pipeline failed")
-        raise HTTPException(status_code=502, detail=f"Không thể hoàn tất câu trả lời: {error}") from error
     except Exception as error:
-        logger.exception("Query pipeline failed")
-        raise HTTPException(status_code=503, detail=f"Không thể tìm kiếm tài liệu: {error}") from error
+        logger.exception("Document retrieval failed")
+        detail = str(error).strip() or f"{type(error).__name__} (không có thông tin lỗi chi tiết)"
+        raise HTTPException(status_code=503, detail=f"Không thể tìm kiếm trong tài liệu: {detail}") from error
 
+    try:
+        answer, mode = await app.state.answerer.answer(request.question, retrieved)
+    except Exception as error:
+        logger.exception("Answer generation failed")
+        detail = str(error).strip() or type(error).__name__
+        answer = f"Không thể tổng hợp câu trả lời bằng Ollama: {detail}. Hãy kiểm tra Ollama rồi thử lại."
+        mode = "configuration_required"
+
+    cited_numbers = set(app.state.answerer.cited_source_numbers(answer, len(retrieved)))
     sources = [
         SourceOut(
             citation=index,
@@ -279,5 +284,6 @@ async def query_documents(request: QueryRequest) -> QueryOut:
             content=result["content"],
         )
         for index, result in enumerate(retrieved, start=1)
+        if index in cited_numbers
     ]
     return QueryOut(question=request.question, answer=answer, answer_mode=mode, sources=sources)
