@@ -87,7 +87,10 @@ def _get_rapid_ocr_engine():
                         "Det.model_type": ModelType.SMALL,
                         "Det.ocr_version": OCRVersion.PPOCRV6,
                         "Rec.engine_type": EngineType.ONNXRUNTIME,
-                        "Rec.lang_type": LangRec.VI,
+                        # PP-OCRv6 uses one multilingual recognition model for all
+                        # supported languages (including Vietnamese); this RapidOCR
+                        # release does not define a dedicated LangRec.VI enum.
+                        "Rec.lang_type": LangRec.CH,
                         "Rec.model_type": ModelType.SMALL,
                         "Rec.ocr_version": OCRVersion.PPOCRV6,
                     }
