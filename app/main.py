@@ -1,13 +1,17 @@
+import asyncio
 import hashlib
 import logging
 import sqlite3
+import threading
 import uuid
 from contextlib import asynccontextmanager
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
+from threading import Event
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from starlette.concurrency import run_in_threadpool
 
 from app.config import get_settings
@@ -16,6 +20,7 @@ from app.schemas import DocumentOut, IndexOut, IndexRequest, QueryOut, QueryRequ
 from app.services.documents import chunk_pages, extract_docx, extract_pdf
 from app.services.embeddings import EmbeddingService
 from app.services.generation import AnswerService
+from app.services.operations import OperationCancelled, raise_if_cancelled
 from app.services.retrieval import RetrievalService
 from app.services.vector_store import VectorStore, make_vector_id
 
@@ -58,6 +63,8 @@ async def lifespan(application: FastAPI):
         settings.ollama_timeout_seconds,
         settings.ollama_keep_alive,
     )
+    application.state.operations = {}
+    application.state.operations_lock = threading.Lock()
     yield
     vectors.close()
 
@@ -65,22 +72,59 @@ async def lifespan(application: FastAPI):
 app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def attach_operation_cancellation(request: Request, call_next):
+    operation_id = request.headers.get("X-Operation-ID")
+    if operation_id and request.url.path in {"/documents/upload", "/query"}:
+        with app.state.operations_lock:
+            request.state.cancel_event = app.state.operations.get(operation_id)
+    else:
+        request.state.cancel_event = None
+    try:
+        return await call_next(request)
+    finally:
+        cancel_event = request.state.cancel_event
+        if operation_id and cancel_event is not None:
+            with app.state.operations_lock:
+                if app.state.operations.get(operation_id) is cancel_event:
+                    app.state.operations.pop(operation_id, None)
+
+
+async def _await_with_cancellation(awaitable, cancel_event: Event | None):
+    raise_if_cancelled(cancel_event)
+    if cancel_event is None:
+        return await awaitable
+    task = asyncio.create_task(awaitable)
+    while not task.done():
+        if cancel_event.is_set():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
+            raise OperationCancelled
+        await asyncio.wait({task}, timeout=0.1)
+    return await task
+
+
 def _upsert_in_batches(
     embeddings: EmbeddingService,
     vectors: VectorStore,
     chunks: list[dict],
     batch_size: int,
+    cancel_event: Event | None = None,
 ) -> None:
     batch_size = max(1, batch_size)
     started_at = perf_counter()
     total_batches = (len(chunks) + batch_size - 1) // batch_size
     for start in range(0, len(chunks), batch_size):
+        raise_if_cancelled(cancel_event)
         batch = chunks[start : start + batch_size]
         embedding_started_at = perf_counter()
         encoded = embeddings.encode([chunk["content"] for chunk in batch])
+        raise_if_cancelled(cancel_event)
         embedding_seconds = perf_counter() - embedding_started_at
         qdrant_started_at = perf_counter()
         vectors.upsert(batch, encoded)
+        raise_if_cancelled(cancel_event)
         qdrant_seconds = perf_counter() - qdrant_started_at
         batch_number = start // batch_size + 1
         logger.info(
@@ -109,8 +153,32 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.post("/operations/{operation_id}", status_code=201, tags=["operations"])
+def create_operation(operation_id: str) -> dict[str, str]:
+    try:
+        operation_id = str(uuid.UUID(operation_id))
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Mã thao tác không hợp lệ.") from error
+    with app.state.operations_lock:
+        if operation_id in app.state.operations:
+            raise HTTPException(status_code=409, detail="Thao tác đã tồn tại.")
+        app.state.operations[operation_id] = Event()
+    return {"id": operation_id, "status": "running"}
+
+
+@app.post("/operations/{operation_id}/cancel", tags=["operations"])
+def cancel_operation(operation_id: str) -> dict[str, bool]:
+    with app.state.operations_lock:
+        cancel_event = app.state.operations.pop(operation_id, None)
+        if cancel_event is None:
+            return {"cancelled": False}
+        cancel_event.set()
+    return {"cancelled": True}
+
+
 @app.post("/documents/upload", response_model=UploadOut, status_code=201, tags=["documents"])
-async def upload_document(file: UploadFile = File(...)) -> UploadOut:
+async def upload_document(request: Request, file: UploadFile = File(...)) -> UploadOut:
+    cancel_event = request.state.cancel_event
     upload_started_at = perf_counter()
     filename = Path(file.filename or "").name
     suffix = Path(filename).suffix.lower()
@@ -119,6 +187,7 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
 
     read_started_at = perf_counter()
     content = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
+    raise_if_cancelled(cancel_event)
     read_seconds = perf_counter() - read_started_at
     if len(content) > settings.max_upload_mb * 1024 * 1024:
         raise HTTPException(status_code=413, detail=f"Kích thước tối đa là {settings.max_upload_mb} MB.")
@@ -138,15 +207,19 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
                 content,
                 settings.ocr_language,
                 settings.ocr_dpi,
+                cancel_event,
             )
         else:
             pages = await run_in_threadpool(extract_docx, content)
         extraction_seconds = perf_counter() - extraction_started_at
+        raise_if_cancelled(cancel_event)
         chunking_started_at = perf_counter()
         text_chunks = await run_in_threadpool(
             chunk_pages, pages, settings.chunk_size_chars, settings.chunk_overlap_chars
         )
         chunking_seconds = perf_counter() - chunking_started_at
+    except OperationCancelled as error:
+        raise HTTPException(status_code=409, detail="Đã dừng tải lên và lập chỉ mục.") from error
     except Exception as error:
         logger.info("Could not extract %s: %s", filename, error)
         raise HTTPException(status_code=422, detail=str(error)) from error
@@ -170,18 +243,32 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
     ]
 
     try:
+        raise_if_cancelled(cancel_event)
         await run_in_threadpool(
             app.state.database.add_document,
             {"id": document_id, "filename": filename, "sha256": digest, "created_at": now},
             chunks,
         )
+        raise_if_cancelled(cancel_event)
         await run_in_threadpool(
             _upsert_in_batches,
             app.state.embeddings,
             app.state.vectors,
             chunks,
             settings.index_batch_size,
+            cancel_event,
         )
+        raise_if_cancelled(cancel_event)
+    except OperationCancelled as error:
+        try:
+            await run_in_threadpool(app.state.vectors.delete_document, document_id)
+        except Exception:
+            logger.exception("Failed to roll back vectors for cancelled upload %s", document_id)
+        try:
+            await run_in_threadpool(app.state.database.remove_document, document_id)
+        except Exception:
+            logger.exception("Failed to roll back document metadata for cancelled upload %s", document_id)
+        raise HTTPException(status_code=409, detail="Đã dừng tải lên và lập chỉ mục.") from error
     except sqlite3.IntegrityError:
         existing = app.state.database.find_document_by_hash(digest)
         if existing:
@@ -256,7 +343,9 @@ def delete_document(document_id: str) -> None:
 
 
 @app.post("/query", response_model=QueryOut, tags=["query"])
-async def query_documents(request: QueryRequest) -> QueryOut:
+async def query_documents(request: QueryRequest, http_request: Request) -> QueryOut:
+    cancel_event = http_request.state.cancel_event
+    raise_if_cancelled(cancel_event)
     if request.document_ids:
         existing_ids = {document["id"] for document in app.state.database.list_documents()}
         missing = set(request.document_ids) - existing_ids
@@ -264,16 +353,29 @@ async def query_documents(request: QueryRequest) -> QueryOut:
             raise HTTPException(status_code=404, detail=f"Không tìm thấy tài liệu: {', '.join(sorted(missing))}")
 
     try:
-        retrieved = await run_in_threadpool(
-            app.state.retrieval.retrieve, request.question, settings.retrieval_top_k, request.document_ids
+        retrieved = await _await_with_cancellation(
+            run_in_threadpool(
+                app.state.retrieval.retrieve,
+                request.question,
+                settings.retrieval_top_k,
+                request.document_ids,
+                cancel_event,
+            ),
+            cancel_event,
         )
+    except OperationCancelled as error:
+        raise HTTPException(status_code=409, detail="Đã dừng tìm câu trả lời.") from error
     except Exception as error:
         logger.exception("Document retrieval failed")
         detail = str(error).strip() or f"{type(error).__name__} (không có thông tin lỗi chi tiết)"
         raise HTTPException(status_code=503, detail=f"Không thể tìm kiếm trong tài liệu: {detail}") from error
 
     try:
-        answer, mode = await app.state.answerer.answer(request.question, retrieved)
+        answer, mode = await _await_with_cancellation(
+            app.state.answerer.answer(request.question, retrieved), cancel_event
+        )
+    except OperationCancelled as error:
+        raise HTTPException(status_code=409, detail="Đã dừng tìm câu trả lời.") from error
     except Exception as error:
         logger.exception("Answer generation failed")
         detail = str(error).strip() or type(error).__name__

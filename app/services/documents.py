@@ -1,7 +1,9 @@
 import io
 import re
+import threading
 import unicodedata
 from dataclasses import dataclass
+from threading import Event
 
 import pymupdf
 from docx import Document
@@ -10,6 +12,8 @@ from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
 from docx.table import Table
 from docx.text.paragraph import Paragraph
+
+from app.services.operations import raise_if_cancelled
 
 
 @dataclass
@@ -53,6 +57,9 @@ def _docx_blocks(document: DocumentType):
 
 OCR_MIN_EMBEDDED_TEXT_CHARS = 1200
 OCR_MIN_IMAGE_COVERAGE = 0.35
+_rapid_ocr_engine = None
+_rapid_ocr_engine_lock = threading.Lock()
+_rapid_ocr_run_lock = threading.Lock()
 
 
 def _page_needs_ocr(page: pymupdf.Page, text: str) -> bool:
@@ -66,26 +73,70 @@ def _page_needs_ocr(page: pymupdf.Page, text: str) -> bool:
     )
 
 
+def _get_rapid_ocr_engine():
+    global _rapid_ocr_engine
+    if _rapid_ocr_engine is None:
+        with _rapid_ocr_engine_lock:
+            if _rapid_ocr_engine is None:
+                from rapidocr import EngineType, LangDet, LangRec, ModelType, OCRVersion, RapidOCR
+
+                _rapid_ocr_engine = RapidOCR(
+                    params={
+                        "Det.engine_type": EngineType.ONNXRUNTIME,
+                        "Det.lang_type": LangDet.CH,
+                        "Det.model_type": ModelType.SMALL,
+                        "Det.ocr_version": OCRVersion.PPOCRV6,
+                        "Rec.engine_type": EngineType.ONNXRUNTIME,
+                        "Rec.lang_type": LangRec.VI,
+                        "Rec.model_type": ModelType.SMALL,
+                        "Rec.ocr_version": OCRVersion.PPOCRV6,
+                    }
+                )
+    return _rapid_ocr_engine
+
+
+def _extract_page_text_with_rapid_ocr(page: pymupdf.Page, dpi: int) -> str:
+    import numpy as np
+
+    pixmap = page.get_pixmap(dpi=dpi, alpha=False)
+    image = np.frombuffer(pixmap.samples, dtype=np.uint8).reshape(pixmap.height, pixmap.width, pixmap.n)
+    if pixmap.n >= 3:
+        image = image[:, :, :3][:, :, ::-1].copy()
+    with _rapid_ocr_run_lock:
+        result = _get_rapid_ocr_engine()(image)
+    return "\n".join(text.strip() for text in (result.txts or ()) if text.strip())
+
+
 def extract_pdf(
     data: bytes,
     ocr_language: str = "vie+eng",
     ocr_dpi: int = 250,
+    cancel_event: Event | None = None,
 ) -> list[TextPage]:
     pages: list[TextPage] = []
     with pymupdf.open(stream=data, filetype="pdf") as pdf:
         for index, page in enumerate(pdf, start=1):
+            raise_if_cancelled(cancel_event)
             text = _strip_page_number_artifacts(page.get_text("text"))
             if _page_needs_ocr(page, text):
                 try:
                     textpage = page.get_textpage_ocr(language=ocr_language, dpi=ocr_dpi, full=True)
                     ocr_text = _strip_page_number_artifacts(page.get_text("text", textpage=textpage))
-                except Exception as error:
-                    raise ValueError(
-                        f"Không thể OCR trang {index} của PDF scan. Hãy cài Tesseract OCR cùng dữ liệu "
-                        f"ngôn ngữ {ocr_language}, rồi khởi động lại API. Chi tiết: {error}"
-                    ) from error
+                except Exception as tesseract_error:
+                    raise_if_cancelled(cancel_event)
+                    try:
+                        ocr_text = clean_text(_extract_page_text_with_rapid_ocr(page, ocr_dpi))
+                    except Exception as rapid_ocr_error:
+                        raise_if_cancelled(cancel_event)
+                        raise ValueError(
+                            f"Không thể OCR trang {index} bằng Tesseract hoặc RapidOCR. "
+                            "Hãy cài lại phụ thuộc bằng `pip install -r requirements.txt`; "
+                            "lần OCR đầu tiên cần Internet để tải model. "
+                            f"Tesseract: {tesseract_error}. RapidOCR: {rapid_ocr_error}"
+                        ) from rapid_ocr_error
                 if len(ocr_text) > len(text):
                     text = ocr_text
+            raise_if_cancelled(cancel_event)
             if text:
                 pages.append(TextPage(number=index, text=text))
     if not pages:

@@ -1,4 +1,5 @@
 import re
+from threading import Event
 from typing import Any
 
 from rank_bm25 import BM25Okapi
@@ -6,6 +7,7 @@ from sentence_transformers import CrossEncoder
 
 from app.database import Database
 from app.services.embeddings import EmbeddingService
+from app.services.operations import raise_if_cancelled
 from app.services.vector_store import VectorStore
 
 
@@ -33,7 +35,14 @@ class RetrievalService:
         self.reranker_model = reranker_model
         self._reranker: CrossEncoder | None = None
 
-    def retrieve(self, question: str, top_k: int, document_ids: list[str] | None = None) -> list[dict[str, Any]]:
+    def retrieve(
+        self,
+        question: str,
+        top_k: int,
+        document_ids: list[str] | None = None,
+        cancel_event: Event | None = None,
+    ) -> list[dict[str, Any]]:
+        raise_if_cancelled(cancel_event)
         chunks = self.database.list_chunks(document_ids)
         if not chunks:
             return []
@@ -52,8 +61,11 @@ class RetrievalService:
                 if scores[index] > 0
             ]
 
+        raise_if_cancelled(cancel_event)
         query_vector = self.embeddings.encode([question])[0]
+        raise_if_cancelled(cancel_event)
         vector_results = self.vectors.search(query_vector, self.candidate_count, active_document_ids)
+        raise_if_cancelled(cancel_event)
         # SQLite is the source of truth: ignore stale Qdrant points left by old or partial deletions.
         dense_ranked = [
             {**chunks_by_id[result["chunk_id"]], "dense_score": result["dense_score"]}
@@ -80,10 +92,12 @@ class RetrievalService:
 
         candidates = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
         if self.reranker_enabled and candidates:
+            raise_if_cancelled(cancel_event)
             if self._reranker is None:
                 self._reranker = CrossEncoder(self.reranker_model)
             pairs = [(question, item["content"]) for item in candidates]
             scores = self._reranker.predict(pairs)
+            raise_if_cancelled(cancel_event)
             for item, score in zip(candidates, scores, strict=True):
                 item["score"] = float(score)
             candidates.sort(key=lambda item: item["score"], reverse=True)
