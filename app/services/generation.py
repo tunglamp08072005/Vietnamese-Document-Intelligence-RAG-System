@@ -154,7 +154,7 @@ class AnswerService:
         }
         if cited:
             return sorted(cited)
-        return list(range(1, source_count + 1))
+        return []
 
     async def _find_local_chat_model(self, client: httpx.AsyncClient) -> str | None:
         response = await client.get(f"{self.base_url}/api/tags")

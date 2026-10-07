@@ -34,6 +34,15 @@ def clean_text(value: str) -> str:
     return value.strip()
 
 
+def _strip_page_number_artifacts(value: str) -> str:
+    lines = value.splitlines()
+    while lines and re.fullmatch(r"\s*\d+\s*", lines[0]):
+        lines.pop(0)
+    while lines and re.fullmatch(r"\s*\d+\s*", lines[-1]):
+        lines.pop()
+    return clean_text("\n".join(lines))
+
+
 def _docx_blocks(document: DocumentType):
     for child in document.element.body.iterchildren():
         if isinstance(child, CT_P):
@@ -65,11 +74,11 @@ def extract_pdf(
     pages: list[TextPage] = []
     with pymupdf.open(stream=data, filetype="pdf") as pdf:
         for index, page in enumerate(pdf, start=1):
-            text = clean_text(page.get_text("text"))
+            text = _strip_page_number_artifacts(page.get_text("text"))
             if _page_needs_ocr(page, text):
                 try:
                     textpage = page.get_textpage_ocr(language=ocr_language, dpi=ocr_dpi, full=True)
-                    ocr_text = clean_text(page.get_text("text", textpage=textpage))
+                    ocr_text = _strip_page_number_artifacts(page.get_text("text", textpage=textpage))
                 except Exception as error:
                     raise ValueError(
                         f"Không thể OCR trang {index} của PDF scan. Hãy cài Tesseract OCR cùng dữ liệu "
@@ -107,7 +116,7 @@ def extract_docx(data: bytes) -> list[TextPage]:
 def _split_oversized(text: str, max_chars: int) -> list[str]:
     if len(text) <= max_chars:
         return [text]
-    sentences = re.split(r"(?<=[.!?。])\s+", text)
+    sentences = re.split(r"(?<=[.!?;。])\s+", text)
     pieces: list[str] = []
     current = ""
     for sentence in sentences:
@@ -145,7 +154,10 @@ def _split_oversized(text: str, max_chars: int) -> list[str]:
 def chunk_pages(pages: list[TextPage], max_chars: int, overlap_chars: int) -> list[TextChunk]:
     units: list[tuple[str, int | None]] = []
     for page in pages:
-        for paragraph in re.split(r"\n{1,2}", page.text):
+        # PDF extraction inserts single newlines at visual line wraps. Join those
+        # lines before chunking so a sentence is not exposed as a fragment.
+        page_text = re.sub(r"(?<!\n)\n(?!\n)", " ", page.text)
+        for paragraph in re.split(r"\n{2,}", page_text):
             paragraph = clean_text(paragraph)
             if paragraph:
                 units.extend((part, page.number) for part in _split_oversized(paragraph, max_chars))
@@ -163,16 +175,18 @@ def chunk_pages(pages: list[TextPage], max_chars: int, overlap_chars: int) -> li
                     page_end=max(current_pages) if current_pages else None,
                 )
             )
-            words = current.split()
-            tail = ""
             tail_limit = max(0, min(overlap_chars, max_chars - len(text) - 2))
-            for word in reversed(words):
-                candidate_tail = f"{word} {tail}".strip()
-                if len(candidate_tail) > tail_limit:
-                    break
-                tail = candidate_tail
+            # Keep overlap only at a complete sentence/list-item boundary.
+            tail = ""
+            if tail_limit:
+                sentences = re.split(r"(?<=[.!?;。])\s+", current)
+                for sentence in reversed(sentences):
+                    candidate_tail = f"{sentence} {tail}".strip()
+                    if len(candidate_tail) > tail_limit:
+                        break
+                    tail = candidate_tail
             current = tail
-            current_pages = [current_pages[-1]] if current_pages else []
+            current_pages = [current_pages[-1]] if tail and current_pages else []
         current = f"{current}\n\n{text}".strip()
         if page_number is not None:
             current_pages.append(page_number)

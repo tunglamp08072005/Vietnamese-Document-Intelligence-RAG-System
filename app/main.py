@@ -281,6 +281,16 @@ async def query_documents(request: QueryRequest) -> QueryOut:
         mode = "configuration_required"
 
     cited_numbers = set(app.state.answerer.cited_source_numbers(answer, len(retrieved)))
+    if (
+        mode == "ollama"
+        and retrieved
+        and not cited_numbers
+        and "không tìm thấy thông tin" not in answer.casefold()
+    ):
+        # If the model omits inline citations, tie its answer to the best-ranked
+        # passage instead of displaying every retrieved (often overlapping) chunk.
+        answer = f"{answer.rstrip()} [1]"
+        cited_numbers = {1}
     sources = [
         SourceOut(
             citation=index,
