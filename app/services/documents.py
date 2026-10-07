@@ -49,6 +49,11 @@ def _docx_blocks(document: DocumentType):
 
 OCR_MIN_EMBEDDED_TEXT_CHARS = 1200
 OCR_MIN_IMAGE_COVERAGE = 0.35
+_INCOMPLETE_DATE_RE = re.compile(r"\bngày\s+tháng\s+năm\s+((?:19|20)\d{2,6})\b", re.IGNORECASE)
+_COMPLETE_DATE_RE = re.compile(
+    r"\bngày\s*(\d{1,2})\s+tháng\s*(\d{1,2})\s+năm\s*((?:19|20)\d{2})\b",
+    re.IGNORECASE,
+)
 _rapid_ocr_engine = None
 _rapid_ocr_engine_lock = threading.Lock()
 _rapid_ocr_run_lock = threading.Lock()
@@ -63,6 +68,36 @@ def _page_needs_ocr(page: pymupdf.Page, text: str) -> bool:
         for image in page.get_images(full=True)
         for image_rect in page.get_image_rects(image[0])
     )
+
+
+def _restore_incomplete_dates(text: str, ocr_text: str) -> str:
+    """Use OCR only to fill dates that the PDF text layer left blank."""
+    ocr_dates = {
+        (match.group(1), match.group(2), match.group(3))
+        for match in _COMPLETE_DATE_RE.finditer(ocr_text)
+    }
+    if not ocr_dates:
+        return text
+
+    incomplete_matches = list(_INCOMPLETE_DATE_RE.finditer(text))
+    matches_by_year: dict[str, list[re.Match[str]]] = {}
+    for match in incomplete_matches:
+        matches_by_year.setdefault(match.group(1)[:4], []).append(match)
+
+    replacements: dict[int, str] = {}
+    for expected_year, matches in matches_by_year.items():
+        candidates = {date for date in ocr_dates if date[2] == expected_year}
+        if len(matches) != 1 or len(candidates) != 1:
+            continue
+        match = matches[0]
+        day, month, year = next(iter(candidates))
+        replacements[match.start()] = f"ngày {day} tháng {month} năm {year}"
+
+    for match in reversed(incomplete_matches):
+        replacement = replacements.get(match.start())
+        if replacement:
+            text = f"{text[:match.start()]}{replacement}{text[match.end():]}"
+    return text
 
 
 def _get_rapid_ocr_engine():
@@ -112,25 +147,36 @@ def extract_pdf(
     with pymupdf.open(stream=data, filetype="pdf") as pdf:
         for index, page in enumerate(pdf, start=1):
             raise_if_cancelled(cancel_event)
-            text = clean_pdf_page_text(page.get_text("text"))
-            if _page_needs_ocr(page, text):
+            raw_text = page.get_text("text")
+            text = clean_pdf_page_text(raw_text)
+            needs_page_ocr = _page_needs_ocr(page, text)
+            needs_date_ocr = bool(_INCOMPLETE_DATE_RE.search(raw_text))
+            if needs_page_ocr or needs_date_ocr:
                 try:
                     textpage = page.get_textpage_ocr(language=ocr_language, dpi=ocr_dpi, full=True)
-                    ocr_text = clean_pdf_page_text(page.get_text("text", textpage=textpage))
+                    raw_ocr_text = page.get_text("text", textpage=textpage)
                 except Exception as tesseract_error:
                     raise_if_cancelled(cancel_event)
                     try:
-                        ocr_text = clean_pdf_page_text(_extract_page_text_with_rapid_ocr(page, ocr_dpi))
+                        raw_ocr_text = _extract_page_text_with_rapid_ocr(page, ocr_dpi)
                     except Exception as rapid_ocr_error:
                         raise_if_cancelled(cancel_event)
-                        raise ValueError(
-                            f"Không thể OCR trang {index} bằng Tesseract hoặc RapidOCR. "
-                            "Hãy cài lại phụ thuộc bằng `pip install -r requirements.txt`; "
-                            "lần OCR đầu tiên cần Internet để tải model. "
-                            f"Tesseract: {tesseract_error}. RapidOCR: {rapid_ocr_error}"
-                        ) from rapid_ocr_error
-                if len(ocr_text) > len(text):
-                    text = ocr_text
+                        if needs_page_ocr:
+                            raise ValueError(
+                                f"Không thể OCR trang {index} bằng Tesseract hoặc RapidOCR. "
+                                "Hãy cài lại phụ thuộc bằng `pip install -r requirements.txt`; "
+                                "lần OCR đầu tiên cần Internet để tải model. "
+                                f"Tesseract: {tesseract_error}. RapidOCR: {rapid_ocr_error}"
+                            ) from rapid_ocr_error
+                        raw_ocr_text = ""
+
+                if needs_date_ocr:
+                    repaired_text = _restore_incomplete_dates(raw_text, raw_ocr_text)
+                    text = clean_pdf_page_text(repaired_text)
+                elif raw_ocr_text:
+                    ocr_text = clean_pdf_page_text(raw_ocr_text)
+                    if len(ocr_text) > len(text):
+                        text = ocr_text
             raise_if_cancelled(cancel_event)
             if text:
                 pages.append(TextPage(number=index, text=text))

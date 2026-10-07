@@ -11,6 +11,24 @@ from app.services.operations import raise_if_cancelled
 from app.services.vector_store import VectorStore
 
 
+_HEADING_FOCUS_PHRASES = (
+    "phương pháp",
+    "khái niệm",
+    "định nghĩa",
+    "ví dụ",
+    "ưu điểm",
+    "nhược điểm",
+    "đánh giá",
+    "ứng dụng",
+    "quy định",
+    "điều khoản",
+    "mục tiêu",
+    "kết quả",
+    "nguyên nhân",
+    "giải pháp",
+)
+
+
 def tokenize(text: str) -> list[str]:
     return re.findall(r"[\w]+", text.casefold(), flags=re.UNICODE)
 
@@ -89,6 +107,14 @@ class RetrievalService:
                         "rrf_score": 0.0,
                     }
                 fused[chunk_id]["rrf_score"] += 1.0 / (self.rrf_k + rank)
+
+        question_lower = question.casefold()
+        focus_phrases = [phrase for phrase in _HEADING_FOCUS_PHRASES if phrase in question_lower]
+        for candidate in fused.values():
+            heading = re.sub(r"\s+", " ", candidate["content"][:120]).strip().casefold()
+            if heading.startswith("trong phần này"):
+                continue
+            candidate["rrf_score"] += 0.008 * sum(phrase in heading for phrase in focus_phrases)
 
         candidates = sorted(fused.values(), key=lambda item: item["rrf_score"], reverse=True)
         if self.reranker_enabled and candidates:

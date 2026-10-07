@@ -31,7 +31,14 @@ _SOURCE_BOUNDARY_RE = re.compile(
 _INCOMPLETE_ISSUE_DATE_RE = re.compile(
     r"\bngày\s+tháng\s+năm\s+\d{4}\b", re.IGNORECASE
 )
+_COMPLETE_DATE_RE = re.compile(
+    r"\bngày\s*(\d{1,2})\s+tháng\s*(\d{1,2})\s+năm\s*((?:19|20)\d{2})\b",
+    re.IGNORECASE,
+)
 _QCVN_CODE_RE = re.compile(r"QCVN\s+\d{1,2}:\d{4}/BTNMT", re.IGNORECASE)
+_NAMED_TERM_RE = re.compile(
+    r"\b(?:[A-Z]{2,}(?:-[A-Za-z0-9]+)*|[A-Z][a-z]+[A-Z][A-Za-z0-9]*|[A-Z]-[A-Z][a-z]+)\b"
+)
 _BULLET_RE = re.compile(r"\s*[•▪◦]\s*")
 _TOKEN_RE = re.compile(r"[^\W_]+", re.UNICODE)
 
@@ -194,9 +201,187 @@ def add_qcvn_citations(answer: str, sources: list[dict], cited_numbers: set[int]
     return answer, cited_numbers
 
 
+def align_named_term_citations(answer: str, sources: list[dict]) -> str:
+    """Align citations for named algorithms/acronyms to chunks containing those terms."""
+    answer_terms = {
+        term.casefold()
+        for term in _NAMED_TERM_RE.findall(answer)
+        if term.casefold() not in {"qcvn", "btnmt"}
+    }
+    if not answer_terms:
+        return answer
+
+    support_by_source = {
+        index: {
+            term
+            for term in answer_terms
+            if re.search(rf"(?<!\w){re.escape(term)}(?!\w)", source.get("content", ""), re.IGNORECASE)
+        }
+        for index, source in enumerate(sources, start=1)
+    }
+    if not any(support_by_source.values()):
+        return answer
+
+    # A source citation that supports none of the answer's named terms is likely
+    # a misleading citation when another retrieved chunk contains those terms.
+    unsupported_numbers = {
+        index for index, terms in support_by_source.items() if not terms
+    }
+    for index in unsupported_numbers:
+        answer = re.sub(rf"\s*\[{index}\]", "", answer)
+
+    lines = answer.splitlines(keepends=True)
+    aligned_lines: list[str] = []
+    for line in lines:
+        line_terms = {
+            term.casefold()
+            for term in _NAMED_TERM_RE.findall(line)
+            if term.casefold() not in {"qcvn", "btnmt"}
+        }
+        supported = {
+            index: len(terms & line_terms)
+            for index, terms in support_by_source.items()
+            if terms & line_terms
+        }
+        if not supported:
+            aligned_lines.append(line)
+            continue
+
+        best_count = max(supported.values())
+        best_sources = {index for index, count in supported.items() if count == best_count}
+        body = re.sub(
+            r"\s*\[(\d+)\]",
+            lambda match: match.group() if int(match.group(1)) in best_sources else "",
+            line.rstrip("\r\n"),
+        ).rstrip()
+        existing = {
+            int(number)
+            for number in re.findall(r"\[(\d+)\]", body)
+        }
+        body += "".join(f" [{index}]" for index in sorted(best_sources - existing))
+        ending = line[len(line.rstrip("\r\n")):]
+        aligned_lines.append(body + ending)
+
+    return "".join(aligned_lines)
+
+
 def _keywords(value: str) -> Counter[str]:
     words = Counter(token.casefold() for token in _TOKEN_RE.findall(value))
     return Counter({word: count for word, count in words.items() if len(word) > 2 and word not in _STOP_WORDS})
+
+
+def align_answer_citations(answer: str, sources: list[dict]) -> str:
+    """Align each answer line to the retrieved passage that best supports it."""
+    parts = re.split(r"(\n+)", answer)
+    source_terms = {
+        index: set(_keywords(source.get("content", "")))
+        for index, source in enumerate(sources, start=1)
+    }
+    for part_index in range(0, len(parts), 2):
+        paragraph = parts[part_index]
+        paragraph_text = re.sub(r"\[\d+\]", "", paragraph).strip()
+        paragraph_terms = set(_keywords(paragraph_text))
+        if len(paragraph_terms) < 3:
+            continue
+
+        qcvn_codes = {
+            re.sub(r"\s+", "", match.group()).casefold()
+            for match in _QCVN_CODE_RE.finditer(paragraph_text)
+        }
+        answer_dates = {
+            tuple(match.groups())
+            for match in _COMPLETE_DATE_RE.finditer(paragraph_text)
+        }
+        date_source_indexes: set[int] = set()
+        date_scores: dict[int, float] = {}
+        if answer_dates:
+            for index, source in enumerate(sources, start=1):
+                source_dates = {
+                    tuple(match.groups())
+                    for match in _COMPLETE_DATE_RE.finditer(source.get("content", ""))
+                }
+                overlap = answer_dates & source_dates
+                if overlap:
+                    date_source_indexes.add(index)
+                    date_scores[index] = len(overlap) / len(answer_dates)
+            if not date_source_indexes:
+                years = {date[2] for date in answer_dates}
+                date_source_indexes = {
+                    index
+                    for index, source in enumerate(sources, start=1)
+                    if any(
+                        re.search(
+                            rf"\bngày\s+tháng\s+năm\s+{re.escape(year)}\b",
+                            source.get("content", ""),
+                            re.IGNORECASE,
+                        )
+                        for year in years
+                    )
+                }
+                date_scores = {index: 1.0 for index in date_source_indexes}
+        scores: dict[int, float] = {}
+        for index, source in enumerate(sources, start=1):
+            content = source.get("content", "")
+            terms = source_terms[index]
+            if answer_dates:
+                if index in date_source_indexes:
+                    scores[index] = date_scores[index]
+                continue
+            if qcvn_codes:
+                matching_contexts = []
+                for match in _QCVN_CODE_RE.finditer(content):
+                    code = re.sub(r"\s+", "", match.group()).casefold()
+                    if code not in qcvn_codes:
+                        continue
+                    matching_contexts.append(
+                        content[max(0, match.start() - 180):min(len(content), match.end() + 220)]
+                    )
+                if not matching_contexts:
+                    continue
+
+                # A legal code can be mentioned again in a later transition clause.
+                # Match its nearby subject (for example, "chất lượng nước mặt") so
+                # the citation points to the clause that defines the listed standard.
+                subject_terms = paragraph_terms - {"qcvn", "btnmt", "2023"}
+                best_local_overlap = max(
+                    len(subject_terms & set(_keywords(context)))
+                    for context in matching_contexts
+                )
+                source_text = _normalize_characters(content).casefold()
+                normalized_paragraph = _normalize_characters(paragraph_text).casefold()
+                descriptors = [
+                    phrase for phrase in ("chất lượng đất", "chất lượng không khí", "chất lượng nước mặt",
+                                          "chất lượng nước dưới đất", "chất lượng nước biển")
+                    if phrase in normalized_paragraph
+                ]
+                phrase_bonus = 3 if any(phrase in source_text for phrase in descriptors) else 0
+                scores[index] = best_local_overlap + phrase_bonus
+                continue
+
+            overlap = len(paragraph_terms & terms)
+            recall = overlap / len(paragraph_terms)
+            if overlap >= 3 and recall >= 0.3:
+                scores[index] = recall
+
+        if not scores:
+            continue
+        best_score = max(scores.values())
+        # Choose the strongest supporting passage. Allow exact ties so a sentence
+        # that genuinely spans adjacent pages can retain both page references.
+        if qcvn_codes:
+            supported = {index for index, score in scores.items() if score == best_score}
+        else:
+            supported = {
+                index for index, score in scores.items()
+                if score >= best_score * 0.98
+            }
+        if not supported:
+            continue
+
+        clean_paragraph = re.sub(r"\s*\[\d+\]", "", paragraph.rstrip()).rstrip()
+        clean_paragraph += "".join(f" [{index}]" for index in sorted(supported))
+        parts[part_index] = clean_paragraph + paragraph[len(paragraph.rstrip()):]
+    return "".join(parts)
 
 
 def citation_excerpt(content: str, question: str, answer: str, max_chars: int = 1500) -> str:
