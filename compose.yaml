@@ -19,6 +19,8 @@ services:
       QDRANT_URL: http://qdrant:6333
       QDRANT_COLLECTION: vietnamese_documents
       HF_HOME: /models/huggingface
+      OCR_LANGUAGE: ${OCR_LANGUAGE:-vie+eng}
+      OCR_DPI: ${OCR_DPI:-250}
       EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-8}
       INDEX_BATCH_SIZE: ${INDEX_BATCH_SIZE:-128}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}

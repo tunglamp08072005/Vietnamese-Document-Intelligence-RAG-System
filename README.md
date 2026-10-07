@@ -10,7 +10,7 @@ MVP hỏi đáp trên tài liệu tiếng Việt. Hệ thống nhận PDF/DOCX, 
 - Trích dẫn file và số trang PDF trong API/UI.
 - API FastAPI, giao diện Streamlit, chạy local hoặc Docker Compose.
 
-PDF scan chưa được OCR; PDF cần có lớp văn bản. DOCX không có thông tin số trang đáng tin cậy nên citation chỉ tên file.
+PDF scan được OCR tự động ở các trang có ảnh lớn nhưng thiếu lớp văn bản. DOCX không có thông tin số trang đáng tin cậy nên citation chỉ tên file.
 
 ## Chạy local
 
@@ -22,6 +22,8 @@ py -3.11 -m venv .venv
 python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
+
+Khi chạy local trên Windows, PDF scan cần Tesseract OCR cùng dữ liệu ngôn ngữ tiếng Việt (`vie`) và tiếng Anh (`eng`). Cài Tesseract theo [hướng dẫn cài đặt chính thức](https://tesseract-ocr.github.io/tessdoc/Installation.html), bảo đảm `tesseract.exe` có trong `PATH`, rồi mở terminal mới và kiểm tra `tesseract --list-langs` có `vie` và `eng`. Tesseract cần engine và dữ liệu huấn luyện của từng ngôn ngữ.
 
 Để khởi động API và giao diện cùng lúc trong một terminal, chạy:
 
@@ -47,6 +49,8 @@ Mở `http://localhost:8501`; tài liệu API ở `http://127.0.0.1:8000/docs`. 
 
 Giữ tiến trình `run_local.py`, hoặc cả hai terminal API và Streamlit, chạy trong suốt khi sử dụng ứng dụng. Nếu giao diện báo không kết nối được `127.0.0.1:8000`, hãy kiểm tra log API trong terminal.
 
+Khi tải PDF scan, các trang có ảnh chiếm nhiều diện tích và dưới 1.200 ký tự văn bản sẽ được OCR bằng `vie+eng` ở 250 DPI. Có thể chỉnh `OCR_LANGUAGE` và `OCR_DPI` trong `.env`. Nếu cài đặt thiếu Tesseract hoặc dữ liệu `vie`/`eng`, API sẽ báo rõ thay vì chỉ lập chỉ mục phần chữ ký hoặc số trang. Tài liệu đã lập chỉ mục trước khi bật OCR cần xóa khỏi giao diện rồi tải lên lại.
+
 Quá trình upload ghi thời gian đọc file, trích xuất, chunking, embedding và Qdrant vào terminal API. Mặc định Qdrant ghi theo lô 128 chunks để giảm số lượt ghi; có thể điều chỉnh `INDEX_BATCH_SIZE`. Nếu đủ bộ nhớ, tăng `EMBEDDING_BATCH_SIZE` từ 8 lên 16 hoặc 32 để thử tăng tốc embedding; nếu gặp lỗi thiếu bộ nhớ, giảm về 4 hoặc 8.
 
 ## Bật Ollama để tổng hợp câu trả lời
@@ -70,7 +74,7 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-UI ở `http://localhost:8501`, API ở `http://localhost:8000/docs`, Qdrant dashboard ở `http://localhost:6333/dashboard`. Để dùng Ollama chạy trên máy host, đặt `OLLAMA_MODEL` trong `.env`; Compose mặc định trỏ API tới `host.docker.internal:11434`.
+UI ở `http://localhost:8501`, API ở `http://localhost:8000/docs`, Qdrant dashboard ở `http://localhost:6333/dashboard`. Docker image đã cài Tesseract cùng dữ liệu tiếng Việt và tiếng Anh. Để dùng Ollama chạy trên máy host, đặt `OLLAMA_MODEL` trong `.env`; Compose mặc định trỏ API tới `host.docker.internal:11434`.
 
 ## API
 

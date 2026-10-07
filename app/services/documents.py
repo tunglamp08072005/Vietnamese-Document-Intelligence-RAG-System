@@ -3,7 +3,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 
-import fitz
+import pymupdf
 from docx import Document
 from docx.document import Document as DocumentType
 from docx.oxml.text.paragraph import CT_P
@@ -42,15 +42,45 @@ def _docx_blocks(document: DocumentType):
             yield Table(child, document)
 
 
-def extract_pdf(data: bytes) -> list[TextPage]:
+OCR_MIN_EMBEDDED_TEXT_CHARS = 1200
+OCR_MIN_IMAGE_COVERAGE = 0.35
+
+
+def _page_needs_ocr(page: pymupdf.Page, text: str) -> bool:
+    page_area = page.rect.get_area()
+    if len(text) >= OCR_MIN_EMBEDDED_TEXT_CHARS or page_area <= 0:
+        return False
+    return any(
+        image_rect.get_area() / page_area >= OCR_MIN_IMAGE_COVERAGE
+        for image in page.get_images(full=True)
+        for image_rect in page.get_image_rects(image[0])
+    )
+
+
+def extract_pdf(
+    data: bytes,
+    ocr_language: str = "vie+eng",
+    ocr_dpi: int = 250,
+) -> list[TextPage]:
     pages: list[TextPage] = []
-    with fitz.open(stream=data, filetype="pdf") as pdf:
+    with pymupdf.open(stream=data, filetype="pdf") as pdf:
         for index, page in enumerate(pdf, start=1):
             text = clean_text(page.get_text("text"))
+            if _page_needs_ocr(page, text):
+                try:
+                    textpage = page.get_textpage_ocr(language=ocr_language, dpi=ocr_dpi, full=True)
+                    ocr_text = clean_text(page.get_text("text", textpage=textpage))
+                except Exception as error:
+                    raise ValueError(
+                        f"Không thể OCR trang {index} của PDF scan. Hãy cài Tesseract OCR cùng dữ liệu "
+                        f"ngôn ngữ {ocr_language}, rồi khởi động lại API. Chi tiết: {error}"
+                    ) from error
+                if len(ocr_text) > len(text):
+                    text = ocr_text
             if text:
                 pages.append(TextPage(number=index, text=text))
     if not pages:
-        raise ValueError("PDF không có lớp văn bản có thể đọc. Tài liệu scan cần OCR, hiện chưa được bật.")
+        raise ValueError("PDF không có nội dung văn bản có thể trích xuất hoặc OCR.")
     return pages
 
 

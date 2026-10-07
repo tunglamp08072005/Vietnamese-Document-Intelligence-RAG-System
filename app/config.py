@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     qdrant_collection: str = "vietnamese_documents"
     embedding_model: str = "BAAI/bge-m3"
     embedding_device: str | None = None
+    ocr_language: str = "vie+eng"
+    ocr_dpi: int = 250
     reranker_enabled: bool = False
     reranker_model: str = "BAAI/bge-reranker-v2-m3"
     ollama_base_url: str = "http://localhost:11434"

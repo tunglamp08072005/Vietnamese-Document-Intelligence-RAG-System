@@ -132,7 +132,15 @@ async def upload_document(file: UploadFile = File(...)) -> UploadOut:
 
     try:
         extraction_started_at = perf_counter()
-        pages = await run_in_threadpool(extract_pdf if suffix == ".pdf" else extract_docx, content)
+        if suffix == ".pdf":
+            pages = await run_in_threadpool(
+                extract_pdf,
+                content,
+                settings.ocr_language,
+                settings.ocr_dpi,
+            )
+        else:
+            pages = await run_in_threadpool(extract_docx, content)
         extraction_seconds = perf_counter() - extraction_started_at
         chunking_started_at = perf_counter()
         text_chunks = await run_in_threadpool(
