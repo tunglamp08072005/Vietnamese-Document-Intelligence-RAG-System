@@ -37,6 +37,8 @@ class RetrievalService:
         chunks = self.database.list_chunks(document_ids)
         if not chunks:
             return []
+        chunks_by_id = {chunk["id"]: chunk for chunk in chunks}
+        active_document_ids = sorted({chunk["document_id"] for chunk in chunks})
 
         query_terms = tokenize(question)
         lexical_ranked: list[dict[str, Any]] = []
@@ -51,7 +53,13 @@ class RetrievalService:
             ]
 
         query_vector = self.embeddings.encode([question])[0]
-        dense_ranked = self.vectors.search(query_vector, self.candidate_count, document_ids)
+        vector_results = self.vectors.search(query_vector, self.candidate_count, active_document_ids)
+        # SQLite is the source of truth: ignore stale Qdrant points left by old or partial deletions.
+        dense_ranked = [
+            {**chunks_by_id[result["chunk_id"]], "dense_score": result["dense_score"]}
+            for result in vector_results
+            if result.get("chunk_id") in chunks_by_id
+        ]
         fused: dict[str, dict[str, Any]] = {}
         for ranking in (dense_ranked, lexical_ranked):
             for rank, result in enumerate(ranking, start=1):
