@@ -96,9 +96,10 @@ if st.button("Tìm câu trả lời", type="primary", disabled=len(question.stri
             else:
                 result = response.json()
                 st.subheader("Trả lời")
-                st.markdown(result["answer"])
-                if result["answer_mode"] == "extractive":
-                    st.caption("Đang hiển thị trích đoạn trực tiếp. Cấu hình Ollama để bật câu trả lời sinh bởi LLM.")
+                if result["answer_mode"] == "configuration_required":
+                    st.warning(result["answer"])
+                else:
+                    st.markdown(result["answer"])
                 if result["sources"]:
                     st.subheader("Nguồn")
                     for source in result["sources"]:

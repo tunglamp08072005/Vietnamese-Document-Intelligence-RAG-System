@@ -1,6 +1,6 @@
 # Vietnamese Document Intelligence & RAG
 
-MVP hỏi đáp trên tài liệu tiếng Việt. Hệ thống nhận PDF/DOCX, trích xuất văn bản, chia đoạn có metadata trang, tạo embedding bằng BGE-M3, lập chỉ mục trong Qdrant và kết hợp dense search với BM25 bằng Reciprocal Rank Fusion (RRF). Kết quả được trả lời qua Ollama nếu đã cấu hình; nếu chưa, API trả các trích đoạn có nguồn để tránh tự tạo câu trả lời.
+MVP hỏi đáp trên tài liệu tiếng Việt. Hệ thống nhận PDF/DOCX, trích xuất văn bản, chia đoạn có metadata trang, tạo embedding bằng BGE-M3, lập chỉ mục trong Qdrant và kết hợp dense search với BM25 bằng Reciprocal Rank Fusion (RRF). API dùng Ollama để tổng hợp câu trả lời tiếng Việt có citation; nếu Ollama chưa sẵn sàng, giao diện hướng dẫn bật model và vẫn hiển thị các nguồn tìm được.
 
 ## Tính năng
 
@@ -39,16 +39,16 @@ Mở `http://localhost:8501`; tài liệu API ở `http://localhost:8000/docs`. 
 
 Quá trình upload ghi thời gian đọc file, trích xuất, chunking, embedding và Qdrant vào terminal API. Mặc định Qdrant ghi theo lô 128 chunks để giảm số lượt ghi; có thể điều chỉnh `INDEX_BATCH_SIZE`. Nếu đủ bộ nhớ, tăng `EMBEDDING_BATCH_SIZE` từ 8 lên 16 hoặc 32 để thử tăng tốc embedding; nếu gặp lỗi thiếu bộ nhớ, giảm về 4 hoặc 8.
 
-## Bật LLM Ollama
+## Bật Ollama để tổng hợp câu trả lời
 
-Cài và khởi động Ollama riêng, tải một model chat phù hợp, rồi đặt trong `.env`:
+Cài và khởi động Ollama riêng, sau đó tải một model chat. Ví dụ:
 
 ```dotenv
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 ```
 
-Tên model cần khớp model đã cài trong Ollama. Nếu để trống, API dùng chế độ trích đoạn trực tiếp. Có thể bật reranker bằng `RERANKER_ENABLED=true`; lần đầu dùng sẽ tải `BAAI/bge-reranker-v2-m3`.
+Tải model bằng `ollama pull qwen2.5:7b`. Tên trong `.env` phải khớp model đã cài. Nếu `OLLAMA_MODEL` để trống, API tự chọn model chat Ollama đã cài (ưu tiên Qwen); câu trả lời được yêu cầu bằng tiếng Việt, ngắn gọn và có citation. Nếu Ollama chưa chạy hoặc chưa có model chat, giao diện sẽ báo rõ cách bật thay vì hiển thị các đoạn trích dài. Có thể bật reranker bằng `RERANKER_ENABLED=true`; lần đầu dùng sẽ tải `BAAI/bge-reranker-v2-m3`.
 
 ## Chạy bằng Docker Compose
 
