@@ -64,10 +64,11 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=qwen2.5:7b
 OLLAMA_TIMEOUT_SECONDS=600
 API_QUERY_TIMEOUT_SECONDS=660
+API_UPLOAD_TIMEOUT_SECONDS=7200
 OLLAMA_KEEP_ALIVE=10m
 ```
 
-Tải model bằng `ollama pull qwen2.5:7b`. Tên trong `.env` phải khớp model đã cài. Nếu `OLLAMA_MODEL` để trống, API tự chọn model chat Ollama đã cài (ưu tiên Qwen); câu trả lời được yêu cầu bằng tiếng Việt, ngắn gọn và có citation. API chờ tối đa 600 giây để Ollama nạp model và trả lời; giao diện chờ thêm 60 giây để tránh tự ngắt trước API. Nếu cần tăng thời gian chờ, tăng `OLLAMA_TIMEOUT_SECONDS` và đặt `API_QUERY_TIMEOUT_SECONDS` cao hơn giá trị đó ít nhất 60 giây. `OLLAMA_KEEP_ALIVE=10m` giữ model trong bộ nhớ 10 phút sau lần dùng cuối, giúp các câu hỏi kế tiếp không phải nạp lại model trong khoảng thời gian này. Nếu Ollama chưa chạy hoặc chưa có model chat, giao diện sẽ báo rõ cách bật thay vì hiển thị các đoạn trích dài. Có thể bật reranker bằng `RERANKER_ENABLED=true`; lần đầu dùng sẽ tải `BAAI/bge-reranker-v2-m3`.
+Tải model bằng `ollama pull qwen2.5:7b`. Tên trong `.env` phải khớp model đã cài. Nếu `OLLAMA_MODEL` để trống, API tự chọn model chat Ollama đã cài (ưu tiên Qwen); câu trả lời được yêu cầu bằng tiếng Việt, ngắn gọn và có citation. API chờ tối đa 600 giây để Ollama nạp model và trả lời; giao diện chờ thêm 60 giây để tránh tự ngắt trước API. Nếu cần tăng thời gian chờ, tăng `OLLAMA_TIMEOUT_SECONDS` và đặt `API_QUERY_TIMEOUT_SECONDS` cao hơn giá trị đó ít nhất 60 giây. Upload PDF scan có thể cần lâu hơn do OCR và embedding CPU; `API_UPLOAD_TIMEOUT_SECONDS` mặc định là 7.200 giây (2 giờ) và có thể tăng thêm trong `.env` nếu cần. `OLLAMA_KEEP_ALIVE=10m` giữ model trong bộ nhớ 10 phút sau lần dùng cuối, giúp các câu hỏi kế tiếp không phải nạp lại model trong khoảng thời gian này. Nếu Ollama chưa chạy hoặc chưa có model chat, giao diện sẽ báo rõ cách bật thay vì hiển thị các đoạn trích dài. Có thể bật reranker bằng `RERANKER_ENABLED=true`; lần đầu dùng sẽ tải `BAAI/bge-reranker-v2-m3`.
 
 ## Chạy bằng Docker Compose
 

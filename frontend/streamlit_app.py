@@ -11,6 +11,7 @@ import streamlit as st
 
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
+API_UPLOAD_TIMEOUT_SECONDS = int(os.getenv("API_UPLOAD_TIMEOUT_SECONDS", "7200"))
 API_QUERY_TIMEOUT_SECONDS = int(os.getenv("API_QUERY_TIMEOUT_SECONDS", "660"))
 st.set_page_config(page_title="Vietnamese Document Intelligence", page_icon="📚", layout="wide")
 st.title("Vietnamese Document Intelligence")
@@ -103,7 +104,7 @@ def submit_upload(operation_id: str, cancel_event: Event, filename: str, content
                 cancel_event,
                 files={"file": (filename, content, mime_type or "application/octet-stream")},
                 headers={"X-Operation-ID": operation_id},
-                timeout=(10, 1800),
+                timeout=(10, API_UPLOAD_TIMEOUT_SECONDS),
             )
         )
     except httpx.ConnectError as error:
@@ -191,9 +192,9 @@ def render_feedback(kind: str) -> None:
         if kind == "upload":
             st.error(
                 "API phản hồi quá thời gian chờ khi xử lý tài liệu. "
-                "Có thể do tài liệu có nhiều trang ảnh cần OCR, hoặc lần đầu khởi động "
-                "API cần tải model (BAAI/bge-m3 ~40 giây). "
-                "Hãy khởi động lại API và thử lại — lần sau sẽ nhanh hơn vì model đã được nạp sẵn."
+                "Tài liệu nhiều trang ảnh có thể cần lâu hơn do OCR và embedding chạy trên CPU. "
+                "API có thể vẫn đang xử lý; hãy kiểm tra terminal trước khi khởi động lại. "
+                "Có thể tăng API_UPLOAD_TIMEOUT_SECONDS trong file .env nếu cần."
             )
         else:
             st.error(
