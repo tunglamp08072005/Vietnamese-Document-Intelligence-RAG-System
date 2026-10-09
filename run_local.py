@@ -11,6 +11,12 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
+# Đảm bảo terminal Windows hiển thị được tiếng Việt (UTF-8)
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 API_HEALTH_URL = "http://127.0.0.1:8000/health"
