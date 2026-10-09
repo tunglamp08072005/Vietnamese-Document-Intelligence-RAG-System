@@ -51,6 +51,14 @@ async def lifespan(application: FastAPI):
         settings.embedding_device,
         batch_size=settings.embedding_batch_size,
     )
+    # Pre-warm: load the embedding model at startup so the first upload request is
+    # not stalled by model initialisation (which can take ~40 s for BAAI/bge-m3).
+    logger.info(
+        "Pre-loading embedding model '%s' — this may take up to a minute on cold start…",
+        settings.embedding_model,
+    )
+    await run_in_threadpool(embeddings.warm_up)
+    logger.info("Embedding model ready.")
     application.state.database = database
     application.state.vectors = vectors
     application.state.embeddings = embeddings
@@ -188,6 +196,7 @@ async def upload_document(request: Request, file: UploadFile = File(...)) -> Upl
     upload_started_at = perf_counter()
     filename = Path(file.filename or "").name
     suffix = Path(filename).suffix.lower()
+    logger.info("Upload started: %s", filename)
     if suffix not in {".pdf", ".docx"}:
         raise HTTPException(status_code=415, detail="Chỉ hỗ trợ tài liệu PDF hoặc DOCX.")
 

@@ -188,7 +188,17 @@ def render_feedback(kind: str) -> None:
         st.error(f"API bị ngắt kết nối: {feedback['message']}")
         st.caption("Kiểm tra terminal đang chạy API rồi thử lại.")
     elif feedback.get("error_type") == "timeout":
-        st.error(f"API phản hồi quá thời gian chờ: {feedback['message']}")
+        if kind == "upload":
+            st.error(
+                "API phản hồi quá thời gian chờ khi xử lý tài liệu. "
+                "Có thể do tài liệu có nhiều trang ảnh cần OCR, hoặc lần đầu khởi động "
+                "API cần tải model (BAAI/bge-m3 ~40 giây). "
+                "Hãy khởi động lại API và thử lại — lần sau sẽ nhanh hơn vì model đã được nạp sẵn."
+            )
+        else:
+            st.error(
+                f"API phản hồi quá thời gian chờ: {feedback['message'] or 'Ollama mất quá nhiều thời gian trả lời.'}"
+            )
     elif feedback.get("error_type"):
         st.error(feedback["message"])
     elif feedback.get("error"):

@@ -22,6 +22,10 @@ class EmbeddingService:
             logger.info("Loaded embedding model %s in %.1f seconds", self.model_name, perf_counter() - started_at)
         return self._model
 
+    def warm_up(self) -> None:
+        """Pre-load the model so the first encode call does not block a request."""
+        self._get_model()
+
     def encode(self, texts: Sequence[str]) -> list[list[float]]:
         if not texts:
             return []
